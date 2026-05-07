@@ -1,59 +1,143 @@
-# NLP_Project
+# NLP_Project — RAG Chatbot
 
-## main.py
+FastAPI + FAISS + llama.cpp 기반의 **RAG(Retrieval-Augmented Generation) 챗봇**입니다.  
+로컬 LLM에 문서 검색 컨텍스트를 주입하여 답변하며, 실험 조건(도메인·난이도·답변 형식)을 UI에서 직접 제어할 수 있습니다.
 
-FastAPI 기반 RAG 챗봇 서버입니다. llama.cpp 백엔드와 FAISS 벡터스토어를 연동하여
-스트리밍 채팅 API 및 웹 UI를 제공합니다.
+---
 
-### 주요 기능
+## 아키텍처
 
-- **RAG (Retrieval-Augmented Generation)**: 사용자 질문과 관련된 문서를 벡터 DB에서 검색 후 LLM에 컨텍스트로 주입
-- **스트리밍 응답**: SSE(Server-Sent Events) 방식으로 실시간 토큰 스트리밍
-- **웹 UI 내장**: `/` 경로에서 채팅 인터페이스 제공
-- **실험 조건 제어**: 도메인 / 난이도 / 답변 형식(연역·귀납·자유)을 파라미터로 조절 가능
-- **OpenAI 호환 프록시**: `/v1/*` 경로를 llama.cpp 서버로 투명하게 프록시
+```
+Browser
+  │
+  ▼
+FastAPI (main.py)  ──[FAISS 검색]──▶  vectorstore/
+  │                                    (index.faiss / index.pkl)
+  │  [컨텍스트 주입]
+  ▼
+llama.cpp 서버 (외부, :30004)
+```
 
-### 주요 엔드포인트
+---
 
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| GET | `/` | 웹 채팅 UI |
-| GET | `/health` | 서버 상태 확인 |
-| POST | `/chat` | 채팅 요청 (RAG + 스트리밍 지원) |
-| GET | `/models` | 사용 모델 목록 |
-| GET/POST | `/v1/*` | llama.cpp OpenAI 호환 프록시 |
+## 프로젝트 구조
 
-### 실행 방법
+```
+nlp_project/
+├── main.py                  # FastAPI 서버 (RAG + 웹 UI + OpenAI 프록시)
+├── tools_vectordb/
+│   └── create_faissDB.py    # FAISS 벡터스토어 생성·업데이트 도구
+├── txt/                     # 벡터스토어로 변환할 원본 문서 (.txt / .md)
+├── vectorstore/             # 생성된 FAISS 인덱스 (index.faiss, index.pkl)
+└── requirements.txt
+```
+
+---
+
+## 설치
+
+```bash
+# 가상환경 생성 (선택)
+python -m venv .venv && source .venv/bin/activate
+
+# 의존성 설치
+pip install -r requirements.txt
+```
+
+> **GPU 환경**: `requirements.txt`에 `faiss-gpu-cu12`가 기본값으로 설정되어 있습니다.  
+> **CPU 환경**: `faiss-gpu-cu12` 줄을 주석 처리하고 `faiss-cpu` 줄의 주석을 해제하세요.
+
+---
+
+## 빠른 시작
+
+### 1. 벡터스토어 생성
+
+`txt/` 폴더에 `.txt` 또는 `.md` 파일을 넣고 실행합니다.
+
+```bash
+python tools_vectordb/create_faissDB.py
+```
+
+`vectorstore/index.faiss`, `vectorstore/index.pkl`이 생성됩니다.
+
+### 2. llama.cpp 서버 실행 (별도 터미널)
+
+```bash
+llama-server --model <모델 경로> --port 30004
+```
+
+### 3. FastAPI 서버 실행
 
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
-## tools_vectordb/
 
-텍스트 파일을 FAISS 벡터스토어로 변환하고 관리하는 도구 모음입니다.
+브라우저에서 `http://localhost:8000` 접속 시 채팅 UI가 열립니다.
 
-### 파일 설명
+---
 
-#### `create_faissDB.py`
-- `.txt` / `.md` 파일을 읽어 FAISS 벡터스토어를 생성하거나 업데이트합니다.
-- 임베딩 모델: `intfloat/multilingual-e5-small` (다국어 지원)
-- 주요 함수:
-  - `create_vectorstore_from_files()` : 폴더 내 파일로 벡터스토어를 새로 생성 (기존 덮어쓰기)
-  - `update_vectorstore_from_files()` : 기존 벡터스토어에 새 파일을 추가. 없으면 새로 생성
-  - `load_vectorstore()` : 저장된 벡터스토어 로드
-  - `file_to_documents()` : 단일 파일을 LangChain Document로 변환
+## 주요 기능
 
-### 처리 흐름
+| 기능 | 설명 |
+|---|---|
+| **RAG** | 사용자 질문으로 FAISS 벡터 DB를 검색, 관련 문서를 LLM 컨텍스트에 주입 |
+| **스트리밍** | SSE(Server-Sent Events)로 실시간 토큰 스트리밍 |
+| **웹 UI** | `/` 경로에서 채팅 인터페이스 제공 (RAG 토글·파라미터 조절 포함) |
+| **실험 조건** | 도메인(Known/Unknown) · 난이도(Low/Medium/High) · 답변 형식(연역/귀납/자유) 제어 |
+| **OpenAI 호환 프록시** | `/v1/*` 경로를 llama.cpp 서버로 투명하게 프록시 |
 
-1. 지정 폴더에서 `.txt` / `.md` 파일 수집
-2. 파일을 청크 단위로 분할 (기본: 1000자, overlap 200자)
-3. 다국어 임베딩 모델로 벡터화 후 FAISS DB로 저장
+---
 
-## vectorstore/
+## API 엔드포인트
 
-`create_faissDB.py`로 생성된 FAISS 벡터스토어 바이너리 파일이 저장되는 폴더입니다.
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/` | 웹 채팅 UI |
+| GET | `/health` | llama.cpp 연결 상태 확인 |
+| POST | `/chat` | 채팅 요청 (RAG + 스트리밍 지원) |
+| GET | `/models` | 사용 모델 목록 |
+| GET/POST | `/v1/*` | llama.cpp OpenAI 호환 프록시 |
 
-### 파일 설명
+### `/chat` 요청 예시
 
-- `index.faiss` : 벡터 인덱스 데이터 (임베딩된 청크 벡터)
-- `index.pkl` : 문서 메타데이터 및 텍스트 매핑 정보
+```json
+{
+  "messages": [{"role": "user", "content": "질문 내용"}],
+  "temperature": 0.7,
+  "max_tokens": 1024,
+  "stream": true,
+  "use_rag": true,
+  "domain": "unknown",
+  "difficulty": "medium",
+  "layout": "free"
+}
+```
+
+---
+
+## 벡터스토어 관리 (`create_faissDB.py`)
+
+| 함수 | 설명 |
+|---|---|
+| `create_vectorstore_from_files()` | 폴더 내 파일로 벡터스토어 새로 생성 (기존 덮어쓰기) |
+| `update_vectorstore_from_files()` | 기존 벡터스토어에 새 파일 추가, 없으면 새로 생성 |
+| `load_vectorstore()` | 저장된 벡터스토어 로드 |
+| `file_to_documents()` | 단일 파일을 LangChain Document로 변환 |
+
+- **임베딩 모델**: `intfloat/multilingual-e5-small` (한국어 포함 다국어 지원)
+- **청크 설정**: 기본 1,000자 / overlap 200자
+
+---
+
+## 설정 값
+
+`main.py` 상단에서 변경할 수 있습니다.
+
+```python
+LLAMA_CPP_BASE_URL = "http://localhost:30004"   # llama.cpp 서버 주소
+MODEL_NAME         = "unsloth/Qwen3.5-0.8B"     # 모델 이름
+EMBEDDING_MODEL    = "intfloat/multilingual-e5-small"
+VECTOR_STORE_PATH  = "vectorstore"
+TOP_K              = 3                           # 검색할 문서 수
+```
