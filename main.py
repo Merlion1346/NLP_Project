@@ -7,19 +7,24 @@ from pathlib import Path
 import httpx
 import asyncio
 
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 
 # ─── 설정 ─────────────────────────────────────────────────────────────────────
 LLAMA_CPP_BASE_URL = "http://localhost:30004"
+EMBEDDING_BASE_URL = "http://localhost:30005"
 MODEL_NAME         = "unsloth/Qwen3.5-0.8B"
-EMBEDDING_MODEL    = "intfloat/multilingual-e5-small"
+EMBEDDING_MODEL    = "BAAI/bge-m3"
 VECTOR_STORE_PATH  = "vectorstore"
 TOP_K              = 3   # 검색할 문서 수
 
 # ─── 임베딩 & 벡터스토어 로드 ─────────────────────────────────────────────────
-print(f"[RAG] 임베딩 모델 로드: {EMBEDDING_MODEL}")
-EMBEDDINGS = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+print(f"[RAG] 임베딩 모델: {EMBEDDING_MODEL} @ {EMBEDDING_BASE_URL}")
+EMBEDDINGS = OpenAIEmbeddings(
+    model=EMBEDDING_MODEL,
+    openai_api_base=f"{EMBEDDING_BASE_URL}/v1",
+    openai_api_key="not-needed",
+)
 
 if Path(VECTOR_STORE_PATH).exists():
     print(f"[RAG] 벡터스토어 로드: {VECTOR_STORE_PATH}")

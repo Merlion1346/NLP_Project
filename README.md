@@ -15,7 +15,8 @@ FastAPI (main.py)  ──[FAISS 검색]──▶  vectorstore/
   │                                    (index.faiss / index.pkl)
   │  [컨텍스트 주입]
   ▼
-llama.cpp 서버 (외부, :30004)
+llama-server  (:30004)   ← Qwen3.5-0.8B   (채팅/생성)
+llama-embedding (:30005) ← BGE-M3          (임베딩)
 ```
 
 ---
@@ -25,6 +26,7 @@ llama.cpp 서버 (외부, :30004)
 ```
 nlp_project/
 ├── main.py                  # FastAPI 서버 (RAG + 웹 UI + OpenAI 프록시)
+├── setup_models.sh          # llama.cpp 빌드·모델 다운로드·systemd 서비스 설치
 ├── tools_vectordb/
 │   └── create_faissDB.py    # FAISS 벡터스토어 생성·업데이트 도구
 ├── txt/                     # 벡터스토어로 변환할 원본 문서 (.txt / .md)
@@ -49,9 +51,56 @@ pip install -r requirements.txt
 
 ---
 
+## 모델 서버 설정 (`setup_models.sh`)
+
+`setup_models.sh`를 실행하면 아래 작업이 자동으로 수행됩니다.
+
+1. llama.cpp 클론 및 빌드 (`llama-server` 바이너리 생성)
+2. Hugging Face에서 모델 다운로드
+   - `unsloth/Qwen3.5-0.8B-GGUF` — 채팅/생성용
+   - `ggml-org/bge-m3-Q8_0-GGUF` — 임베딩용
+3. systemd 서비스 파일 생성 및 활성화
+
+```bash
+sudo bash setup_models.sh
+```
+
+> `sudo`가 필요한 이유: `/etc/systemd/system/`에 서비스 파일을 작성하기 때문입니다.
+
+### 설치되는 systemd 서비스
+
+| 서비스 | 포트 | 모델 | 설명 |
+|---|---|---|---|
+| `llama-server` | 30004 | Qwen3.5-0.8B | 채팅 완성 (chat completions) |
+| `llama-embedding` | 30005 | BGE-M3 | 텍스트 임베딩 |
+
+### 서비스 관리 명령어
+
+```bash
+# 상태 확인
+sudo systemctl status llama-server
+sudo systemctl status llama-embedding
+
+# 재시작
+sudo systemctl restart llama-server
+sudo systemctl restart llama-embedding
+
+# 실시간 로그
+sudo journalctl -u llama-server      -f
+sudo journalctl -u llama-embedding   -f
+```
+
+---
+
 ## 빠른 시작
 
-### 1. 벡터스토어 생성
+### 1. 모델 서버 설치 및 실행
+
+```bash
+sudo bash setup_models.sh
+```
+
+### 2. 벡터스토어 생성
 
 `txt/` 폴더에 `.txt` 또는 `.md` 파일을 넣고 실행합니다.
 
@@ -60,12 +109,6 @@ python tools_vectordb/create_faissDB.py
 ```
 
 `vectorstore/index.faiss`, `vectorstore/index.pkl`이 생성됩니다.
-
-### 2. llama.cpp 서버 실행 (별도 터미널)
-
-```bash
-llama-server --model <모델 경로> --port 30004
-```
 
 ### 3. FastAPI 서버 실행
 
@@ -125,7 +168,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | `load_vectorstore()` | 저장된 벡터스토어 로드 |
 | `file_to_documents()` | 단일 파일을 LangChain Document로 변환 |
 
-- **임베딩 모델**: `intfloat/multilingual-e5-small` (한국어 포함 다국어 지원)
+- **임베딩 모델**: `BAAI/bge-m3` (한국어 포함 다국어 지원)
 - **청크 설정**: 기본 1,000자 / overlap 200자
 
 ---
@@ -135,9 +178,10 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 `main.py` 상단에서 변경할 수 있습니다.
 
 ```python
-LLAMA_CPP_BASE_URL = "http://localhost:30004"   # llama.cpp 서버 주소
-MODEL_NAME         = "unsloth/Qwen3.5-0.8B"     # 모델 이름
-EMBEDDING_MODEL    = "intfloat/multilingual-e5-small"
+LLAMA_CPP_BASE_URL = "http://localhost:30004"   # llama-server 주소 (채팅)
+EMBEDDING_BASE_URL = "http://localhost:30005"   # llama-embedding 주소 (임베딩)
+MODEL_NAME         = "unsloth/Qwen3.5-0.8B"     # 생성 모델 이름
+EMBEDDING_MODEL    = "BAAI/bge-m3"              # 임베딩 모델 이름
 VECTOR_STORE_PATH  = "vectorstore"
 TOP_K              = 3                           # 검색할 문서 수
 ```

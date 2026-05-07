@@ -3,28 +3,34 @@ TXT / MD → FAISS 벡터스토어 변환기
 폴더 내 .txt 및 .md 파일을 읽어 FAISS 벡터스토어로 저장합니다.
 
 설치:
-    pip install langchain langchain-community langchain-text-splitters faiss-cpu sentence-transformers
+    pip install langchain langchain-community langchain-text-splitters faiss-cpu langchain-openai
 """
 import glob
 from pathlib import Path
 from typing import List
+from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 # ── 설정 ──────────────────────────────────────────────────────────────────────
-EMBEDDING_MODEL   = "intfloat/multilingual-e5-small"
-INPUT_PATH        = "txt"
-VECTOR_STORE_PATH = "vectorstore"
-CHUNK_SIZE        = 1000
-CHUNK_OVERLAP     = 200
+EMBEDDING_BASE_URL = "http://localhost:30005"
+EMBEDDING_MODEL    = "BAAI/bge-m3"
+INPUT_PATH         = "txt"
+VECTOR_STORE_PATH  = "vectorstore"
+CHUNK_SIZE         = 1000
+CHUNK_OVERLAP      = 200
 
 # 지원 확장자
 SUPPORTED_EXTENSIONS = ("*.txt", "*.md")
 
-# ── 임베딩 모델 (전역 1회 로드) ───────────────────────────────────────────────
-EMBEDDINGS = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+
+# ── 임베딩 모델 (전역 1회 초기화) ─────────────────────────────────────────────
+EMBEDDINGS = OpenAIEmbeddings(
+    model=EMBEDDING_MODEL,
+    openai_api_base=f"{EMBEDDING_BASE_URL}/v1",
+    openai_api_key="not-needed",
+)
 
 
 def _build_splitter(chunk_size: int, chunk_overlap: int) -> RecursiveCharacterTextSplitter:
