@@ -4,4 +4,6 @@ __pycache__/
 *.pyc
 txt/
 .ipynb_checkpoints/
+*.env
+*.xlsx
 

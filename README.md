@@ -27,6 +27,8 @@ llama-embedding (:30005) ← BGE-M3          (임베딩)
 nlp_project/
 ├── main.py                  # FastAPI 서버 (RAG + 웹 UI + OpenAI 프록시)
 ├── setup_models.sh          # llama.cpp 빌드·모델 다운로드·systemd 서비스 설치
+├── test_chatbot.py          # 챗봇 평가 스크립트 (객관식 문항 자동 응답 수집)
+├── grade_llm.py             # Gemini LLM 기반 채점 스크립트 (Accuracy/Precision/Recall/F1)
 ├── tools_vectordb/
 │   └── create_faissDB.py    # FAISS 벡터스토어 생성·업데이트 도구
 ├── txt/                     # 벡터스토어로 변환할 원본 문서 (.txt / .md)
@@ -185,3 +187,79 @@ EMBEDDING_MODEL    = "BAAI/bge-m3"              # 임베딩 모델 이름
 VECTOR_STORE_PATH  = "vectorstore"
 TOP_K              = 3                           # 검색할 문서 수
 ```
+
+---
+
+## 챗봇 평가 (`test_chatbot.py`)
+
+객관식 문항을 챗봇에 자동으로 질의하고 응답을 Excel로 저장합니다.  
+답변 형식(두괄식·미괄식·자유형식) × 난이도(Low·Medium·High) 조합으로 실험합니다.
+
+```bash
+# 기본 실행 (RAG ON)
+python test_chatbot.py
+
+# RAG 없이
+python test_chatbot.py --no-rag
+
+# Known Parametric 모드
+python test_chatbot.py --domain known
+
+# 중단된 실행 이어하기
+python test_chatbot.py --resume results_rag_*.xlsx
+
+# 특정 문항만 실행
+python test_chatbot.py --question-ids L-01 L-02
+```
+
+출력 파일: `results_rag_<타임스탬프>.xlsx` (`결과` + `요약` 시트)
+
+---
+
+## LLM 채점 (`grade_llm.py`)
+
+Gemini API를 사용해 챗봇 응답을 채점하고 분류 평가 지표를 계산합니다.  
+단순 선택지 매칭이 아니라 응답 전문을 LLM이 읽고 정오 판단 + 근거 품질을 평가합니다.
+
+### 사전 조건
+
+`api_keys.env`에 Google API 키를 설정합니다.
+
+```env
+GOOGLE_API_KEY="your-api-key"
+```
+
+### 실행
+
+```bash
+# chatgpt 결과 채점
+python grade_llm.py --results results_rag_chat_gpt_*.xlsx --answers ANSWER_only_chatgpt.xlsx
+
+# claude 결과 채점
+python grade_llm.py --results results_rag_*.xlsx --answers ANSWER_only_claude.xlsx
+
+# 옵션 지정
+python grade_llm.py --results results_*.xlsx --answers ANSWER_only_*.xlsx \
+  --model gemini-2.5-flash \
+  --concurrency 8 \
+  --output my_score.xlsx
+```
+
+### 출력 파일 구조 (`llm_scored_*.xlsx`)
+
+| 시트 | 내용 |
+|---|---|
+| `채점결과` | 원본 데이터 + `LLM선택` · `LLM정오(O/X)` · `LLM근거점수(1~5)` · `LLM평가` |
+| `요약` | 형식 × 난이도별 Accuracy / Precision / Recall / F1 |
+| `클래스별` | 정답 선택지(A/B/C/D)별 Precision / Recall / F1 + 지지수 |
+| `혼동행렬_두괄식` 등 | 형식별 4×4 혼동행렬 |
+
+### LLM 근거 점수 기준
+
+| 점수 | 의미 |
+|---|---|
+| 5 | 정답이고 근거도 완전히 정확 |
+| 4 | 정답이고 근거가 대체로 적절 |
+| 3 | 답은 맞지만 근거가 불충분하거나 부분적으로 잘못됨 |
+| 2 | 오답이지만 일부 근거는 타당 |
+| 1 | 오답이고 근거도 완전히 부적절하거나 환각 |
