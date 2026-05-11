@@ -6,13 +6,17 @@ from typing import Optional, List, Union
 from pathlib import Path
 import httpx
 import asyncio
+import os
+from dotenv import load_dotenv
 
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 
+load_dotenv("api_keys.env")
+
 # ─── 설정 ─────────────────────────────────────────────────────────────────────
-LLAMA_CPP_BASE_URL = "http://<SERVER_ADDRESS>:30004"
-EMBEDDING_BASE_URL = "http://<SERVER_ADDRESS>:30005"
+LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:30004")
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://localhost:30005")
 MODEL_NAME         = "unsloth/Qwen3.6.-35B-A3B"
 EMBEDDING_MODEL    = "BAAI/bge-m3"
 VECTOR_STORE_PATH  = "vectorstore"

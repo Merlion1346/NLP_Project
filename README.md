@@ -15,8 +15,8 @@ FastAPI (main.py)  ──[FAISS 검색]──▶  vectorstore/
   │                                    (index.faiss / index.pkl)
   │  [컨텍스트 주입]
   ▼
-원격 llama-server  (<SERVER_ADDRESS>:30004)   ← Qwen3.6-35B-A3B   (채팅/생성)
-원격 llama-embedding (<SERVER_ADDRESS>:30005) ← BGE-M3             (임베딩)
+원격 llama-server  (:30004)   ← Qwen3.6-35B-A3B   (채팅/생성)
+원격 llama-embedding (:30005) ← BGE-M3             (임베딩)
 ```
 
 ---
@@ -215,14 +215,23 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 `main.py` 상단에서 변경할 수 있습니다.
 
-```python
-LLAMA_CPP_BASE_URL = "http://<SERVER_ADDRESS>:30004"   # llama-server 주소 (채팅)
-EMBEDDING_BASE_URL = "http://<SERVER_ADDRESS>:30005"   # llama-embedding 주소 (임베딩)
-MODEL_NAME         = "unsloth/Qwen3.6.-35B-A3B"      # 생성 모델 이름
-EMBEDDING_MODEL    = "BAAI/bge-m3"                   # 임베딩 모델 이름
-VECTOR_STORE_PATH  = "vectorstore"
-TOP_K              = 3                                # 검색할 문서 수
+서버 주소는 `api_keys.env`에서 로드됩니다. 아래 항목을 설정하세요.
+
+```env
+LLAMA_CPP_BASE_URL="http://<서버주소>:30004"
+EMBEDDING_BASE_URL="http://<서버주소>:30005"
 ```
+
+나머지 값은 `main.py` 상단에서 변경할 수 있습니다.
+
+```python
+MODEL_NAME         = "unsloth/Qwen3.6.-35B-A3B"   # 생성 모델 이름
+EMBEDDING_MODEL    = "BAAI/bge-m3"                 # 임베딩 모델 이름
+VECTOR_STORE_PATH  = "vectorstore"
+TOP_K              = 3                              # 검색할 문서 수
+```
+
+> **주의**: `api_keys.env`는 `.gitignore`에 등록되어 있어 Git에 업로드되지 않습니다.
 
 ---
 
