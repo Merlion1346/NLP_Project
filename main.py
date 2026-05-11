@@ -11,9 +11,9 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 
 # ─── 설정 ─────────────────────────────────────────────────────────────────────
-LLAMA_CPP_BASE_URL = "http://localhost:30004"
-EMBEDDING_BASE_URL = "http://localhost:30005"
-MODEL_NAME         = "unsloth/Qwen3.5-0.8B"
+LLAMA_CPP_BASE_URL = "http://<SERVER_ADDRESS>:30004"
+EMBEDDING_BASE_URL = "http://<SERVER_ADDRESS>:30005"
+MODEL_NAME         = "unsloth/Qwen3.6.-35B-A3B"
 EMBEDDING_MODEL    = "BAAI/bge-m3"
 VECTOR_STORE_PATH  = "vectorstore"
 TOP_K              = 3   # 검색할 문서 수
@@ -60,17 +60,17 @@ class ChatRequest(BaseModel):
 LAYOUT_PROMPTS = {
     "deductive": (
         "반드시 다음 순서로만 답변하라: "
-        "① 첫 문장에서 질문에 대한 최종 결론을 명확하게 제시 "
-        "② 이후 문장에서 결론의 근거와 이유를 설명 "
-        "③ 마지막 문장에서 결론을 한 번 더 요약. "
+        "1.첫 문장에서 질문에 대한 답변을 명확하게 제시하라 "
+        "2.이후 문장에서 결론의 근거와 이유를 설명 "
+        "3.마지막 문장에서 결론을 한 번 더 요약. "
         "절대로 첫 문장을 '~때문에', '~에 따르면', '~을 보면' 등 근거 설명으로 시작하지 말 것. "
         "'근거:', '이유:', '배경:' 같은 레이블을 답변 앞부분에 붙이지 말 것."
     ),
     "inductive": (
         "반드시 다음 순서로만 답변하라: "
-        "① 참고 문서의 관련 근거를 먼저 나열 "
-        "② 근거를 바탕으로 추론 과정 설명 "
-        "③ 마지막 문장에서만 최종 결론 제시. "
+        "1.참고 문서의 관련 근거를 먼저 나열 "
+        "2.근거를 바탕으로 추론 과정 설명 "
+        "3.마지막 문장에서만 질문에 대한 답변을 명확하게 제시하라. "
         "절대로 첫 문장에 결론을 쓰지 말 것. "
         "'결론:', '답:', '정답:' 같은 레이블을 답변 앞부분에 붙이지 말 것."
     ),

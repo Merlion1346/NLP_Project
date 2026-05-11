@@ -26,7 +26,7 @@ import pandas as pd
 
 # ─── 기본 설정 ─────────────────────────────────────────────────────────────────
 CHATBOT_URL = "http://localhost:8000"
-EXCEL_FILE  = "Question_only_claude.xlsx"
+EXCEL_FILE  = "Question_only_chatgpt.xlsx"
 
 LAYOUTS    = ["deductive", "inductive", "free"]
 LAYOUT_KO  = {"deductive": "두괄식", "inductive": "미괄식", "free": "자유형식"}
