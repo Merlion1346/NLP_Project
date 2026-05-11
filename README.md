@@ -15,8 +15,8 @@ FastAPI (main.py)  ──[FAISS 검색]──▶  vectorstore/
   │                                    (index.faiss / index.pkl)
   │  [컨텍스트 주입]
   ▼
-llama-server  (:30004)   ← Qwen3.5-0.8B   (채팅/생성)
-llama-embedding (:30005) ← BGE-M3          (임베딩)
+원격 llama-server  (<SERVER_ADDRESS>:30004)   ← Qwen3.6-35B-A3B   (채팅/생성)
+원격 llama-embedding (<SERVER_ADDRESS>:30005) ← BGE-M3             (임베딩)
 ```
 
 ---
@@ -134,6 +134,42 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 ---
 
+## 답변 형식 프롬프트 (`layout`)
+
+`/chat` 요청의 `layout` 파라미터로 LLM의 답변 구조를 제어합니다.
+
+### 두괄식 (`deductive`)
+
+결론 → 근거 → 요약 순서로 답변합니다.
+
+```
+1. 첫 문장에서 질문에 대한 답변을 명확하게 제시
+2. 이후 문장에서 결론의 근거와 이유를 설명
+3. 마지막 문장에서 결론을 한 번 더 요약
+```
+
+> 첫 문장을 근거 설명(`~때문에`, `~에 따르면`)으로 시작하거나  
+> `근거:` · `이유:` 같은 레이블을 앞에 붙이는 것을 금지합니다.
+
+### 미괄식 (`inductive`)
+
+근거 → 추론 → 결론 순서로 답변합니다.
+
+```
+1. 참고 문서의 관련 근거를 먼저 나열
+2. 근거를 바탕으로 추론 과정 설명
+3. 마지막 문장에서만 질문에 대한 답변을 명확하게 제시
+```
+
+> 첫 문장에 결론을 쓰거나  
+> `결론:` · `답:` · `정답:` 같은 레이블을 앞에 붙이는 것을 금지합니다.
+
+### 자유형식 (`free`)
+
+형식 제약 없이 모델이 자유롭게 답변합니다.
+
+---
+
 ## API 엔드포인트
 
 | 메서드 | 경로 | 설명 |
@@ -180,12 +216,12 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 `main.py` 상단에서 변경할 수 있습니다.
 
 ```python
-LLAMA_CPP_BASE_URL = "http://localhost:30004"   # llama-server 주소 (채팅)
-EMBEDDING_BASE_URL = "http://localhost:30005"   # llama-embedding 주소 (임베딩)
-MODEL_NAME         = "unsloth/Qwen3.5-0.8B"     # 생성 모델 이름
-EMBEDDING_MODEL    = "BAAI/bge-m3"              # 임베딩 모델 이름
+LLAMA_CPP_BASE_URL = "http://<SERVER_ADDRESS>:30004"   # llama-server 주소 (채팅)
+EMBEDDING_BASE_URL = "http://<SERVER_ADDRESS>:30005"   # llama-embedding 주소 (임베딩)
+MODEL_NAME         = "unsloth/Qwen3.6.-35B-A3B"      # 생성 모델 이름
+EMBEDDING_MODEL    = "BAAI/bge-m3"                   # 임베딩 모델 이름
 VECTOR_STORE_PATH  = "vectorstore"
-TOP_K              = 3                           # 검색할 문서 수
+TOP_K              = 3                                # 검색할 문서 수
 ```
 
 ---
