@@ -5,5 +5,3 @@ __pycache__/
 txt/
 .ipynb_checkpoints/
 *.env
-*.xlsx
-
