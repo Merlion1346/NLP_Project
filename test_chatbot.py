@@ -2,15 +2,17 @@
 """
 test_chatbot.py — 챗봇 모델 평가 스크립트
 
-Question_only.xlsx의 객관식 문항을 두괄식 / 미괄식 / 자유형식으로 각각 테스트하고
+evaluation/*.xlsx의 객관식 문항을 두괄식 / 미괄식 / 자유형식으로 각각 테스트하고
 선택 답변과 전체 응답을 Excel로 저장합니다.
 
+엑셀 컬럼: 난이도 | 질문 | 선택지A | 선택지B | 선택지C | 선택지D | 정답
+
 사용법:
-  python test_chatbot.py                         # 기본 실행 (RAG ON, unknown domain)
-  python test_chatbot.py --no-rag                # RAG 없이 실행
-  python test_chatbot.py --domain known          # Known Parametric 모드
-  python test_chatbot.py --resume results_*.xlsx # 중단된 실행 이어하기
-  python test_chatbot.py --question-ids L-01 L-02 # 특정 문항만 테스트
+  python test_chatbot.py                              # 기본 실행 (RAG ON, unknown domain)
+  python test_chatbot.py --no-rag                     # RAG 없이 실행
+  python test_chatbot.py --domain known               # Known Parametric 모드
+  python test_chatbot.py --resume results_*.xlsx      # 중단된 실행 이어하기
+  python test_chatbot.py --question-ids Q-0001 Q-0002 # 특정 문항만 테스트
 """
 
 import argparse
@@ -26,7 +28,7 @@ import pandas as pd
 
 # ─── 기본 설정 ─────────────────────────────────────────────────────────────────
 CHATBOT_URL = "http://localhost:8000"
-EXCEL_FILE  = "Question_only_chatgpt.xlsx"
+EXCEL_FILE  = "evaluation/자백의대가_평가문항_300제.xlsx"
 
 LAYOUTS    = ["deductive", "inductive", "free"]
 LAYOUT_KO  = {"deductive": "두괄식", "inductive": "미괄식", "free": "자유형식"}
@@ -43,10 +45,10 @@ def format_question(row: pd.Series) -> str:
     return (
         f"다음 객관식 문제를 풀어주세요.\n\n"
         f"문제: {row['질문']}\n"
-        f"A. {row['A']}\n"
-        f"B. {row['B']}\n"
-        f"C. {row['C']}\n"
-        f"D. {row['D']}\n\n"
+        f"A. {row['선택지A']}\n"
+        f"B. {row['선택지B']}\n"
+        f"C. {row['선택지C']}\n"
+        f"D. {row['선택지D']}\n\n"
         "정답(A/B/C/D)과 그 이유를 설명해주세요."
     )
 
@@ -124,7 +126,7 @@ def save_results(records: list[dict], output_path: Path):
     df = pd.DataFrame(records)
 
     # 열 순서 정리
-    fixed_cols = ["난이도", "문항ID", "질문", "A", "B", "C", "D"]
+    fixed_cols = ["난이도", "문항번호", "질문", "선택지A", "선택지B", "선택지C", "선택지D", "정답"]
     layout_cols = []
     for lk in ["두괄식", "미괄식", "자유형식"]:
         layout_cols += [f"선택_{lk}", f"응답_{lk}"]
@@ -153,18 +155,27 @@ def save_results(records: list[dict], output_path: Path):
 def _build_summary(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for layout_ko in ["두괄식", "미괄식", "자유형식"]:
-        col = f"선택_{layout_ko}"
-        if col not in df.columns:
+        sel_col = f"선택_{layout_ko}"
+        if sel_col not in df.columns:
             continue
         for diff in ["Low", "Medium", "High", "전체"]:
             subset = df if diff == "전체" else df[df["난이도"] == diff]
-            counts = subset[col].value_counts().reindex(["A", "B", "C", "D", "?"], fill_value=0)
-            rows.append({
-                "형식":   layout_ko,
-                "난이도": diff,
-                "전체":   len(subset),
+            counts = subset[sel_col].value_counts().reindex(["A", "B", "C", "D", "?"], fill_value=0)
+            # 정답 컬럼이 있으면 정답률 계산
+            correct = None
+            if "정답" in subset.columns:
+                matched = subset[sel_col] == subset["정답"].astype(str).str.strip()
+                valid = subset[sel_col] != "?"
+                correct = round(matched[valid].sum() / valid.sum() * 100, 1) if valid.sum() > 0 else None
+            row = {
+                "형식":    layout_ko,
+                "난이도":  diff,
+                "전체":    len(subset),
                 **{f"선택_{k}": int(v) for k, v in counts.items()},
-            })
+            }
+            if correct is not None:
+                row["정답률(%)"] = correct
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -176,11 +187,13 @@ async def run_evaluation(args):
 
     # 원본 데이터 로드
     df_src = pd.read_excel(EXCEL_FILE)
+    # 문항번호 자동 생성 (Q-0001, Q-0002, ...)
+    df_src["문항번호"] = [f"Q-{i+1:04d}" for i in range(len(df_src))]
     print(f"[INFO] 총 {len(df_src)}개 문항 ({', '.join(df_src['난이도'].value_counts().to_dict().__repr__()[1:-1].split(', '))})")
 
     # 특정 문항만 테스트하는 경우 필터
     if args.question_ids:
-        df_src = df_src[df_src["문항ID"].isin(args.question_ids)].reset_index(drop=True)
+        df_src = df_src[df_src["문항번호"].isin(args.question_ids)].reset_index(drop=True)
         print(f"[INFO] 필터 적용 후 {len(df_src)}개 문항")
 
     # 출력 파일명 결정
@@ -198,7 +211,7 @@ async def run_evaluation(args):
         prev = pd.read_excel(args.resume, sheet_name="결과")
         # 세 형식 모두 응답이 있는 행만 완료로 간주
         completed = prev.dropna(subset=["응답_두괄식", "응답_미괄식", "응답_자유형식"])
-        done_ids = set(completed["문항ID"].tolist())
+        done_ids = set(completed["문항번호"].tolist())
         existing_records = completed.to_dict("records")
         print(f"[재개] 이미 완료된 {len(done_ids)}개 문항 건너뜀")
 
@@ -207,7 +220,7 @@ async def run_evaluation(args):
 
     async with httpx.AsyncClient() as client:
         for seq, (_, row) in enumerate(df_src.iterrows(), start=1):
-            qid = str(row["문항ID"])
+            qid = str(row["문항번호"])
             if qid in done_ids:
                 continue
 
@@ -217,10 +230,14 @@ async def run_evaluation(args):
             print(f"\n[{seq:2d}/{total}] {qid} ({row['난이도']}) — {str(row['질문'])[:40]}...")
 
             record: dict = {
-                "난이도": row["난이도"],
-                "문항ID": qid,
-                "질문":   row["질문"],
-                "A": row["A"], "B": row["B"], "C": row["C"], "D": row["D"],
+                "난이도":  row["난이도"],
+                "문항번호": qid,
+                "질문":    row["질문"],
+                "선택지A": row["선택지A"],
+                "선택지B": row["선택지B"],
+                "선택지C": row["선택지C"],
+                "선택지D": row["선택지D"],
+                "정답":    row.get("정답", ""),
             }
 
             for layout in LAYOUTS:
