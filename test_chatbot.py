@@ -229,8 +229,8 @@ async def run_evaluation(args):
     if args.output:
         output_path = Path(args.output)
     else:
-        stem = Path(EXCEL_FILE).stem
-        output_path = Path(f"{stem}_test_result.xlsx")
+        src = Path(EXCEL_FILE)
+        output_path = src.parent / f"{src.stem}_test_result.xlsx"
 
     # 재개 모드: 이미 완료된 문항 건너뜀
     done_ids: set[str] = set()
