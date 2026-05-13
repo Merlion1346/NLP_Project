@@ -20,7 +20,6 @@ import asyncio
 import json
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -230,9 +229,8 @@ async def run_evaluation(args):
     if args.output:
         output_path = Path(args.output)
     else:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tag = "rag" if args.use_rag else "norag"
-        output_path = Path(f"results_{tag}_{ts}.xlsx")
+        stem = Path(EXCEL_FILE).stem
+        output_path = Path(f"{stem}_test_result.xlsx")
 
     # 재개 모드: 이미 완료된 문항 건너뜀
     done_ids: set[str] = set()
