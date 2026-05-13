@@ -20,7 +20,6 @@ import asyncio
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 import httpx
@@ -28,7 +27,7 @@ import pandas as pd
 
 # ─── 기본 설정 ─────────────────────────────────────────────────────────────────
 CHATBOT_URL = "http://localhost:8000"
-EXCEL_FILE  = "evaluation/자백의대가_평가문항_300제.xlsx"
+EVAL_DIR    = "evaluation"
 
 LAYOUTS    = ["deductive", "inductive", "free"]
 LAYOUT_KO  = {"deductive": "두괄식", "inductive": "미괄식", "free": "자유형식"}
@@ -210,13 +209,9 @@ def _build_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ─── 메인 평가 루프 ───────────────────────────────────────────────────────────
-async def run_evaluation(args):
-    # 헬스 체크
-    if not await health_check():
-        sys.exit(1)
-
+async def run_evaluation(args, excel_file: str):
     # 원본 데이터 로드
-    df_src = pd.read_excel(EXCEL_FILE)
+    df_src = pd.read_excel(excel_file)
     # 문항번호 자동 생성 (Q-0001, Q-0002, ...)
     df_src["문항번호"] = [f"Q-{i+1:04d}" for i in range(len(df_src))]
     print(f"[INFO] 총 {len(df_src)}개 문항 ({', '.join(df_src['난이도'].value_counts().to_dict().__repr__()[1:-1].split(', '))})")
@@ -230,8 +225,9 @@ async def run_evaluation(args):
     if args.output:
         output_path = Path(args.output)
     else:
-        src = Path(EXCEL_FILE)
-        output_path = src.parent / f"{src.stem}_test_result.xlsx"
+        result_dir = Path(EVAL_DIR).parent / "evaluation_result"
+        result_dir.mkdir(exist_ok=True)
+        output_path = result_dir / f"{Path(excel_file).stem}_test_result.xlsx"
 
     # 재개 모드: 이미 완료된 문항 건너뜀
     done_ids: set[str] = set()
@@ -328,7 +324,7 @@ def _git_commit_push(output_path: Path):
 def parse_args():
     p = argparse.ArgumentParser(description="챗봇 모델 평가 스크립트")
     p.add_argument("--url",          default=CHATBOT_URL,  help="FastAPI 서버 URL")
-    p.add_argument("--input",        default=EXCEL_FILE,   help="입력 Excel 파일")
+    p.add_argument("--input",        default=None,         help="특정 Excel 파일 지정 (미지정 시 evaluation/ 전체)")
     p.add_argument("--output",       default=None,         help="출력 Excel 파일명 (미지정 시 자동 생성)")
     p.add_argument("--domain",       default="unknown",    choices=["known", "unknown"],
                                                            help="지식 도메인 (known / unknown)")
@@ -337,13 +333,41 @@ def parse_args():
     p.add_argument("--resume",       default=None,         metavar="FILE",
                                                            help="이전 결과 파일에서 이어하기")
     p.add_argument("--question-ids", nargs="+",            metavar="ID",
-                                                           help="테스트할 문항 ID 목록 (예: L-01 M-03)")
+                                                           help="테스트할 문항 ID 목록 (예: Q-0001 Q-0002)")
     p.set_defaults(use_rag=True)
     return p.parse_args()
 
 
-if __name__ == "__main__":
+async def main():
     args = parse_args()
-    CHATBOT_URL = args.url
-    EXCEL_FILE  = args.input
-    asyncio.run(run_evaluation(args))
+    if args.url:
+        global CHATBOT_URL
+        CHATBOT_URL = args.url
+
+    if not await health_check():
+        return
+
+    # 입력 파일 목록 결정
+    if args.input:
+        files = [Path(args.input)]
+    else:
+        files = sorted(
+            p for p in Path(EVAL_DIR).glob("*.xlsx")
+            if "_test_result" not in p.name
+        )
+
+    if not files:
+        print(f"[오류] {EVAL_DIR}/ 에 xlsx 파일이 없습니다.")
+        return
+
+    print(f"[INFO] 평가 대상 파일 {len(files)}개: {[f.name for f in files]}")
+
+    for excel_file in files:
+        print(f"\n{'='*60}")
+        print(f"[파일] {excel_file.name}")
+        print(f"{'='*60}")
+        await run_evaluation(args, str(excel_file))
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
