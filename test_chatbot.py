@@ -34,7 +34,7 @@ LAYOUTS    = ["deductive", "inductive", "free"]
 LAYOUT_KO  = {"deductive": "두괄식", "inductive": "미괄식", "free": "자유형식"}
 DIFF_MAP   = {"Low": "low", "Medium": "medium", "High": "high"}
 
-TEMPERATURE = 0.3   # 평가 시 결정론적 응답을 위해 낮게 설정
+TEMPERATURE = 0.01   # 평가 시 결정론적 응답을 위해 낮게 설정
 MAX_TOKENS  = 2048
 TOP_P       = 0.9
 RETRY_MAX   = 2     # 실패 시 재시도 횟수
@@ -49,16 +49,21 @@ def format_question(row: pd.Series) -> str:
         f"B. {row['선택지B']}\n"
         f"C. {row['선택지C']}\n"
         f"D. {row['선택지D']}\n\n"
-        "정답(A/B/C/D)과 그 이유를 설명해주세요."
+        "반드시 '정답: A', '정답: B', '정답: C', '정답: D' 형식으로 정답 선택지를 명시한 뒤 이유를 설명해주세요."
     )
+
+FOLLOWUP_PROMPT = "위 문제의 최종 정답은 A, B, C, D 중 무엇인가요? 선택지 하나만 답하세요."
 
 
 # ─── 응답에서 선택지 추출 ──────────────────────────────────────────────────────
 _CHOICE_PATTERNS = [
+    r'정답\s*[:：]\s*\**([A-D])\**',
     r'정답[은이]?\s*[:：]?\s*([A-D])',
     r'답[은이]?\s*[:：]?\s*([A-D])',
     r'선택[은이]?\s*[:：]?\s*([A-D])',
-    r'\b([A-D])[)\.]',
+    r'([A-D])[번항]\s*[이가]?\s*정답',
+    r'([A-D])[번항]\s*입니다',
+    r'\b([A-D])[)\.）]',
     r'\b([A-D])\b',
 ]
 
@@ -71,16 +76,16 @@ def extract_choice(text: str) -> str:
 
 
 # ─── 단일 요청 (재시도 포함) ───────────────────────────────────────────────────
-async def ask(
+async def _post(
     client: httpx.AsyncClient,
-    question: str,
+    messages: list,
     difficulty: str,
     layout: str,
     domain: str,
     use_rag: bool,
 ) -> str:
     payload = {
-        "messages":   [{"role": "user", "content": question}],
+        "messages":    messages,
         "temperature": TEMPERATURE,
         "max_tokens":  MAX_TOKENS,
         "top_p":       TOP_P,
@@ -92,17 +97,42 @@ async def ask(
     }
     for attempt in range(RETRY_MAX + 1):
         try:
-            resp = await client.post(
-                f"{CHATBOT_URL}/chat", json=payload, timeout=120.0
-            )
+            resp = await client.post(f"{CHATBOT_URL}/chat", json=payload, timeout=120.0)
             resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            return resp.json()["choices"][0]["message"]["content"]
         except Exception as exc:
             if attempt < RETRY_MAX:
                 await asyncio.sleep(RETRY_DELAY)
             else:
                 return f"[오류] {exc}"
+
+
+async def ask(
+    client: httpx.AsyncClient,
+    question: str,
+    difficulty: str,
+    layout: str,
+    domain: str,
+    use_rag: bool,
+) -> str:
+    messages = [{"role": "user", "content": question}]
+    response = await _post(client, messages, difficulty, layout, domain, use_rag)
+
+    # 선택지가 추출되지 않으면 멀티턴으로 선택지만 재질의
+    if not response.startswith("[오류]") and extract_choice(response) == "?":
+        followup = await _post(
+            client,
+            [
+                {"role": "user",      "content": question},
+                {"role": "assistant", "content": response},
+                {"role": "user",      "content": FOLLOWUP_PROMPT},
+            ],
+            difficulty, "free", domain, False,
+        )
+        if not followup.startswith("[오류]"):
+            response = response + f"\n[폴백] {followup}"
+
+    return response
 
 
 # ─── 헬스 체크 ────────────────────────────────────────────────────────────────
