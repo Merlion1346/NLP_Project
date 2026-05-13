@@ -31,8 +31,11 @@ nlp_project/
 ├── grade_llm.py             # Gemini LLM 기반 채점 스크립트 (Accuracy/Precision/Recall/F1)
 ├── tools_vectordb/
 │   └── create_faissDB.py    # FAISS 벡터스토어 생성·업데이트 도구
-├── txt/                     # 벡터스토어로 변환할 원본 문서 (.txt / .md)
+├── data/                    # 벡터스토어로 변환할 원본 문서 (.txt / .md)
 ├── vectorstore/             # 생성된 FAISS 인덱스 (index.faiss, index.pkl)
+├── evaluation/              # 평가 문항 엑셀 및 결과 파일
+├── report/                  # 주간 리뷰 등 분석 문서
+├── api_keys.env             # API 키 및 서버 주소 (git 미추적)
 └── requirements.txt
 ```
 
@@ -238,7 +241,19 @@ TOP_K              = 3                              # 검색할 문서 수
 ## 챗봇 평가 (`test_chatbot.py`)
 
 객관식 문항을 챗봇에 자동으로 질의하고 응답을 Excel로 저장합니다.  
-답변 형식(두괄식·미괄식·자유형식) × 난이도(Low·Medium·High) 조합으로 실험합니다.
+답변 형식(두괄식·미괄식·자유형식) × 난이도(Low·Medium·High) 조합으로 실험하며,  
+**Low·Medium·High 세 그룹을 병렬로 동시 처리**하여 실험 속도를 최대 3배 향상합니다.
+
+### 입력 엑셀 형식
+
+| 컬럼 | 설명 |
+|---|---|
+| `난이도` | Low / Medium / High |
+| `질문` | 문제 본문 |
+| `선택지A` ~ `선택지D` | 보기 |
+| `정답` | 정답 선택지 (A/B/C/D) |
+
+### 실행
 
 ```bash
 # 기본 실행 (RAG ON)
@@ -251,13 +266,21 @@ python test_chatbot.py --no-rag
 python test_chatbot.py --domain known
 
 # 중단된 실행 이어하기
-python test_chatbot.py --resume results_rag_*.xlsx
+python test_chatbot.py --resume evaluation/<파일명>_test_result.xlsx
 
 # 특정 문항만 실행
-python test_chatbot.py --question-ids L-01 L-02
+python test_chatbot.py --question-ids Q-0001 Q-0002
 ```
 
-출력 파일: `results_rag_<타임스탬프>.xlsx` (`결과` + `요약` 시트)
+### 출력
+
+- 파일명: 입력 파일과 동일한 폴더에 `<원본파일명>_test_result.xlsx` 생성
+- 시트 구성: `결과` (문항별 응답) + `요약` (형식×난이도별 선택 분포 및 정답률)
+- 평가 완료 후 결과 파일을 **자동으로 git commit & push**
+
+### 선택지 추출 방식
+
+LLM 응답에서 A/B/C/D를 추출하지 못한 경우, 멀티턴으로 선택지만 재질의하는 **폴백 메커니즘**이 동작합니다.
 
 ---
 
