@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -307,6 +308,20 @@ async def run_evaluation(args):
         if col in result_df.columns:
             dist = result_df[col].value_counts().to_dict()
             print(f"[{layout_ko}] {dist}")
+
+    # 결과 파일 자동 git commit & push
+    _git_commit_push(output_path)
+
+
+def _git_commit_push(output_path: Path):
+    try:
+        subprocess.run(["git", "add", str(output_path)], check=True)
+        msg = f"Add test result: {output_path.name}"
+        subprocess.run(["git", "commit", "-m", msg], check=True)
+        subprocess.run(["git", "push", "origin", "main"], check=True)
+        print(f"[GIT] 커밋 & 푸시 완료: {output_path.name}")
+    except subprocess.CalledProcessError as e:
+        print(f"[GIT] 실패: {e}")
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
