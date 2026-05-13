@@ -243,53 +243,54 @@ async def run_evaluation(args):
         existing_records = completed.to_dict("records")
         print(f"[재개] 이미 완료된 {len(done_ids)}개 문항 건너뜀")
 
-    total = len(df_src)
     records = list(existing_records)
+    lock = asyncio.Lock()
 
-    async with httpx.AsyncClient() as client:
-        for seq, (_, row) in enumerate(df_src.iterrows(), start=1):
-            qid = str(row["문항번호"])
-            if qid in done_ids:
-                continue
+    async def process_group(diff_ko: str, group: pd.DataFrame):
+        diff_str = DIFF_MAP.get(diff_ko, "medium")
+        total_group = len(group)
+        async with httpx.AsyncClient() as client:
+            for seq, (_, row) in enumerate(group.iterrows(), start=1):
+                qid = str(row["문항번호"])
+                if qid in done_ids:
+                    continue
 
-            difficulty = DIFF_MAP.get(str(row["난이도"]), "medium")
-            question_text = format_question(row)
+                question_text = format_question(row)
+                print(f"  [{diff_ko:6s}] {seq:3d}/{total_group} {qid} — {str(row['질문'])[:35]}...")
 
-            print(f"\n[{seq:2d}/{total}] {qid} ({row['난이도']}) — {str(row['질문'])[:40]}...")
+                record: dict = {
+                    "난이도":  row["난이도"],
+                    "문항번호": qid,
+                    "질문":    row["질문"],
+                    "선택지A": row["선택지A"],
+                    "선택지B": row["선택지B"],
+                    "선택지C": row["선택지C"],
+                    "선택지D": row["선택지D"],
+                    "정답":    row.get("정답", ""),
+                }
 
-            record: dict = {
-                "난이도":  row["난이도"],
-                "문항번호": qid,
-                "질문":    row["질문"],
-                "선택지A": row["선택지A"],
-                "선택지B": row["선택지B"],
-                "선택지C": row["선택지C"],
-                "선택지D": row["선택지D"],
-                "정답":    row.get("정답", ""),
-            }
+                for layout in LAYOUTS:
+                    layout_ko = LAYOUT_KO[layout]
+                    response = await ask(
+                        client, question_text, diff_str, layout,
+                        domain=args.domain, use_rag=args.use_rag,
+                    )
+                    choice = extract_choice(response)
+                    is_error = response.startswith("[오류]")
+                    print(f"    [{diff_ko:6s}·{layout_ko}] → {choice}" + (" ⚠" if is_error else ""))
+                    record[f"선택_{layout_ko}"] = choice
+                    record[f"응답_{layout_ko}"] = response
 
-            for layout in LAYOUTS:
-                layout_ko = LAYOUT_KO[layout]
-                print(f"  [{layout_ko}] 요청 중 ...", end=" ", flush=True)
+                async with lock:
+                    records.append(record)
+                    if len(records) % 10 == 0:
+                        save_results(records, output_path)
+                        print(f"  [중간 저장] 총 {len(records)}문항 완료")
 
-                response = await ask(
-                    client, question_text, difficulty, layout,
-                    domain=args.domain, use_rag=args.use_rag,
-                )
-                choice = extract_choice(response)
-                is_error = response.startswith("[오류]")
-
-                print(f"→ 선택: {choice}" + (" ⚠ 오류" if is_error else ""))
-
-                record[f"선택_{layout_ko}"] = choice
-                record[f"응답_{layout_ko}"] = response
-
-            records.append(record)
-
-            # 10문항마다 중간 저장
-            if seq % 10 == 0:
-                save_results(records, output_path)
-                print(f"  [중간 저장] {seq}문항 완료")
+    # 난이도별로 그룹화하여 병렬 실행
+    groups = {diff: grp for diff, grp in df_src.groupby("난이도", sort=False)}
+    print(f"[INFO] 병렬 실행: {list(groups.keys())}")
+    await asyncio.gather(*[process_group(diff, grp) for diff, grp in groups.items()])
 
     # 최종 저장
     save_results(records, output_path)
