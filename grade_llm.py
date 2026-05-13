@@ -3,9 +3,9 @@
 grade_llm.py — Gemini LLM 기반 챗봇 답안 채점 스크립트
 
 사용법:
-  python grade_llm.py --results results_rag_*.xlsx --answers ANSWER_only_claude.xlsx
-  python grade_llm.py --results results_rag_chat_gpt_*.xlsx --answers ANSWER_only_chatgpt.xlsx
-  python grade_llm.py --results results_*.xlsx --model gemini-2.5-flash --concurrency 8
+  python grade_llm.py                                        # evaluation_result/ 전체 자동 채점
+  python grade_llm.py --results evaluation_result/파일.xlsx  # 특정 파일만
+  python grade_llm.py --model gemini-2.5-flash --concurrency 8
 """
 
 import argparse
@@ -29,11 +29,12 @@ from tqdm.asyncio import tqdm as atqdm
 
 load_dotenv("api_keys.env")
 
+RESULT_DIR   = Path("evaluation_result")
 LAYOUTS_KO   = ["두괄식", "미괄식", "자유형식"]
 DIFFICULTIES = ["Low", "Medium", "High"]
 CHOICES      = ["A", "B", "C", "D"]
 
-DEFAULT_MODEL       = "gemini-2.5-flash"
+DEFAULT_MODEL       = "gemini-2.5-flash-lite"
 DEFAULT_CONCURRENCY = 5
 
 # ─── 채점 프롬프트 ─────────────────────────────────────────────────────────────
@@ -135,15 +136,13 @@ async def grade_one(
 # ─── 전체 채점 실행 ────────────────────────────────────────────────────────────
 async def run_grading(
     df: pd.DataFrame,
-    answer_map: dict,
     client: genai.Client,
     model: str,
     concurrency: int,
 ) -> pd.DataFrame:
     df = df.copy()
-    df["정답"] = df["문항ID"].astype(str).str.strip().map(answer_map)
+    df["정답"] = df["정답"].astype(str).str.strip().str.upper()
 
-    # 정답 내용 맵 (있으면)
     sem = asyncio.Semaphore(concurrency)
     tasks = []
 
@@ -343,26 +342,22 @@ def print_metrics(metrics: dict[str, pd.DataFrame]):
     print("=" * 70)
 
 
-# ─── 정답지 자동 탐색 ──────────────────────────────────────────────────────────
-def find_answer_file(results_path: Path) -> Path:
-    name = results_path.name.lower()
-    candidates = (
-        ["ANSWER_only_chatgpt.xlsx"]
-        if ("chat_gpt" in name or "chatgpt" in name or "google" in name)
-        else ["ANSWER_only_claude.xlsx", "ANSWER_only_chatgpt.xlsx"]
-    )
-    for c in candidates:
-        p = results_path.parent / c
-        if p.exists():
-            return p
-    raise FileNotFoundError("정답지를 찾을 수 없습니다. --answers 옵션으로 직접 지정하세요.")
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    rename = {}
+    if "문항번호" in df.columns and "문항ID" not in df.columns:
+        rename["문항번호"] = "문항ID"
+    for ch in ["A", "B", "C", "D"]:
+        src = f"선택지{ch}"
+        if src in df.columns and ch not in df.columns:
+            rename[src] = ch
+    return df.rename(columns=rename) if rename else df
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser(description="Gemini LLM 기반 채점 스크립트")
-    p.add_argument("--results",     required=True, metavar="FILE",  help="답안 결과 파일")
-    p.add_argument("--answers",     default=None,  metavar="FILE",  help="정답지 파일 (자동 탐색 가능)")
+    p.add_argument("--results",     default=None,  metavar="FILE",
+                                                   help="답안 결과 파일 (미지정 시 evaluation_result/ 자동 탐색)")
     p.add_argument("--output",      default=None,  metavar="FILE",  help="출력 파일명")
     p.add_argument("--model",       default=DEFAULT_MODEL,          help=f"Gemini 모델 (기본: {DEFAULT_MODEL})")
     p.add_argument("--concurrency", default=DEFAULT_CONCURRENCY, type=int,
@@ -371,18 +366,29 @@ def parse_args():
     return p.parse_args()
 
 
+async def process_file(args, results_path: Path, client: genai.Client):
+    print(f"\n[INFO] 파일: {results_path}")
+
+    sheet_names = pd.ExcelFile(results_path).sheet_names
+    sheet = "결과" if "결과" in sheet_names else sheet_names[0]
+    df = _normalize_columns(pd.read_excel(results_path, sheet_name=sheet))
+
+    if "정답" not in df.columns:
+        print(f"[오류] '정답' 컬럼이 없습니다: {results_path}")
+        return
+
+    print(f"[INFO] 문항 수: {len(df)}")
+
+    df_graded = await run_grading(df, client, args.model, args.concurrency)
+    metrics = compute_metrics(df_graded)
+
+    output_path = Path(args.output) if args.output else RESULT_DIR / f"llm_scored_{results_path.name}"
+    save_results(df_graded, metrics, output_path)
+    print_metrics(metrics)
+
+
 async def main():
     args = parse_args()
-
-    results_path = Path(args.results)
-    if not results_path.exists():
-        print(f"[오류] 파일 없음: {results_path}")
-        sys.exit(1)
-
-    answers_path = Path(args.answers) if args.answers else find_answer_file(results_path)
-    if not answers_path.exists():
-        print(f"[오류] 정답지 없음: {answers_path}")
-        sys.exit(1)
 
     import os
     api_key = args.api_key or os.getenv("GOOGLE_API_KEY")
@@ -390,51 +396,24 @@ async def main():
         print("[오류] Google API 키가 없습니다. --api-key 또는 GOOGLE_API_KEY 환경변수를 설정하세요.")
         sys.exit(1)
 
-    print(f"[INFO] 답안지: {results_path}")
-    print(f"[INFO] 정답지: {answers_path}")
-    print(f"[INFO] 모델:   {args.model}")
+    print(f"[INFO] 모델: {args.model}")
 
-    # 데이터 로드
-    sheet_names = pd.ExcelFile(results_path).sheet_names
-    sheet = "결과" if "결과" in sheet_names else sheet_names[0]
-    df_results = pd.read_excel(results_path, sheet_name=sheet)
-    df_answers = pd.read_excel(answers_path)
-
-    df_results["문항ID"] = df_results["문항ID"].astype(str).str.strip()
-    df_answers["문항ID"] = df_answers["문항ID"].astype(str).str.strip()
-
-    # 정답 맵 (정답 + 정답 내용)
-    answer_map = df_answers.set_index("문항ID")["정답"].str.strip().str.upper().to_dict()
-
-    # 정답 내용 맵 (있는 컬럼 우선)
-    content_col = next(
-        (c for c in ["정답내용", "해설 (정답 근거)", "근거/평가 포인트"] if c in df_answers.columns),
-        None,
-    )
-    content_map = df_answers.set_index("문항ID")[content_col].to_dict() if content_col else {}
-    df_results["정답내용"] = df_results["문항ID"].map(content_map).fillna("")
-
-    print(f"[INFO] 답안 {len(df_results)}개, 정답 {len(df_answers)}개")
-
-    # Gemini 클라이언트
-    client = genai.Client(api_key=api_key)
-
-    # 채점 실행
-    df_graded = await run_grading(
-        df_results, answer_map, client, args.model, args.concurrency
-    )
-
-    # 평가 지표 계산
-    metrics = compute_metrics(df_graded)
-
-    # 저장
-    if args.output:
-        output_path = Path(args.output)
+    if args.results:
+        results_path = Path(args.results)
+        if not results_path.exists():
+            print(f"[오류] 파일 없음: {results_path}")
+            sys.exit(1)
+        files = [results_path]
     else:
-        output_path = results_path.parent / f"llm_scored_{results_path.name}"
+        files = sorted(RESULT_DIR.glob("*_test_result.xlsx"))
+        if not files:
+            print(f"[오류] {RESULT_DIR}/ 에 *_test_result.xlsx 파일이 없습니다.")
+            sys.exit(1)
+        print(f"[INFO] 자동 탐색: {[f.name for f in files]}")
 
-    save_results(df_graded, metrics, output_path)
-    print_metrics(metrics)
+    client = genai.Client(api_key=api_key)
+    for results_path in files:
+        await process_file(args, results_path, client)
 
 
 if __name__ == "__main__":
