@@ -18,7 +18,7 @@ from langchain_community.vectorstores import FAISS
 load_dotenv(Path(__file__).parent.parent / "api_keys.env")
 
 # ── 설정 ──────────────────────────────────────────────────────────────────────
-EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://localhost:30005")
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL")
 EMBEDDING_MODEL    = "BAAI/bge-m3"
 INPUT_PATH         = "data"
 VECTOR_STORE_PATH  = "vectorstore"

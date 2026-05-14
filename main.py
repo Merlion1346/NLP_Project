@@ -11,19 +11,21 @@ from dotenv import load_dotenv
 
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_community.retrievers import BM25Retriever
+from langchain_classic.retrievers import EnsembleRetriever
 
 load_dotenv("api_keys.env")
 
 # ─── 설정 ─────────────────────────────────────────────────────────────────────
 LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL")
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL")
-MODEL_NAME         = "unsloth/Qwen3.6.-35B-A3B"
+MODEL_NAME         = "unsloth/Qwen3.5-27B"
 EMBEDDING_MODEL    = "BAAI/bge-m3"
 VECTOR_STORE_PATH  = "vectorstore"
 TOP_K              = 6     # 최종 반환 청크 수
 FETCH_K            = 20    # MMR 후보 청크 수 (TOP_K보다 크게)
 MMR_LAMBDA         = 0.6   # 1.0=순수 유사도, 0.0=순수 다양성
-SCORE_THRESHOLD    = 0.3   # 이 점수 미만 청크 제외 (0~1)
+SCORE_THRESHOLD    = 0.1   # 이 점수 미만 청크 제외 (0~1)
 
 # ─── 임베딩 & 벡터스토어 로드 ─────────────────────────────────────────────────
 print(f"[RAG] 임베딩 모델: {EMBEDDING_MODEL} @ {EMBEDDING_BASE_URL}")
@@ -37,9 +39,22 @@ if Path(VECTOR_STORE_PATH).exists():
     print(f"[RAG] 벡터스토어 로드: {VECTOR_STORE_PATH}")
     VECTORSTORE = FAISS.load_local(VECTOR_STORE_PATH, EMBEDDINGS, allow_dangerous_deserialization=True)
     print("[RAG] 벡터스토어 로드 완료 ✅")
+
+    _all_docs = list(VECTORSTORE.docstore._dict.values())
+    _bm25 = BM25Retriever.from_documents(_all_docs, k=FETCH_K)
+    _faiss = VECTORSTORE.as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": TOP_K, "fetch_k": FETCH_K, "lambda_mult": MMR_LAMBDA},
+    )
+    RETRIEVER = EnsembleRetriever(
+        retrievers=[_bm25, _faiss],
+        weights=[0.4, 0.6],
+    )
+    print(f"[RAG] 하이브리드 검색 초기화 완료 (BM25 0.4 + FAISS-MMR 0.6, 문서 {len(_all_docs)}개) ✅")
 else:
     print(f"[RAG] ⚠️  벡터스토어 없음: {VECTOR_STORE_PATH} — RAG 없이 일반 채팅으로 동작합니다.")
     VECTORSTORE = None
+    RETRIEVER = None
 
 # ─── FastAPI ──────────────────────────────────────────────────────────────────
 app = FastAPI(title="RAG Chatbot", version="1.0.0")
@@ -62,24 +77,39 @@ class ChatRequest(BaseModel):
     domain: str = "unknown"      # "known" | "unknown"
     difficulty: str = "medium"   # "low" | "medium" | "high"
     layout: str = "free"         # "deductive" | "inductive" | "free"
+    persona: str = "none"        # "none" | "drama_writer"
+"""
 
+"""
 # ── 실험 조건 → system prompt 생성 ────────────────────────────────────────────
 LAYOUT_PROMPTS = {
     "deductive": (
-        "반드시 다음 순서로만 답변하라: "
-        "1.첫 문장에서 질문에 대한 답변을 명확하게 제시하라 "
-        "2.이후 문장에서 결론의 근거와 이유를 설명 "
-        "3.마지막 문장에서 결론을 한 번 더 요약. "
-        "절대로 첫 문장을 '~때문에', '~에 따르면', '~을 보면' 등 근거 설명으로 시작하지 말 것. "
-        "'근거:', '이유:', '배경:' 같은 레이블을 답변 앞부분에 붙이지 말 것."
+        "당신은 드라마 작가입니다. "
+        "【두괄식 답변 형식 - 반드시 준수】"
+        "답변은 아래 3단계 구조를 엄격히 따를 것: "
+        "1단계(결론 제시): 첫 문장에서 질문의 핵심 답을 단언형으로 명확히 밝혀라. "
+        "예) '○○는 △△이다.', '○○의 이유는 △△이기 때문이다.' 형태로 시작하라. "
+        "2단계(근거 설명): 이후 문장에서 1단계 결론을 뒷받침하는 구체적 근거·사례·인용을 참고 문서에서 찾아 제시하라. "
+        "근거는 2가지 이상 나열하고, 각 근거가 결론과 어떻게 연결되는지 명시하라. "
+        "3단계(마무리 요약): 마지막 문장에서 결론을 한 문장으로 재확인하며 답변을 닫아라. "
+        "【금지 사항】"
+        "첫 문장을 '~때문에', '~에 따르면', '~을 살펴보면', '먼저' 등 근거·배경 설명으로 시작하는 것 금지. "
+        "'근거:', '이유:', '배경:' 같은 레이블을 답변 첫머리에 붙이는 것 금지. "
+        "결론을 답변 중간이나 끝에만 배치하는 미괄식 구조 금지."
     ),
     "inductive": (
-        "반드시 다음 순서로만 답변하라: "
-        "1.참고 문서의 관련 근거를 먼저 나열 "
-        "2.근거를 바탕으로 추론 과정 설명 "
-        "3.마지막 문장에서만 질문에 대한 답변을 명확하게 제시하라. "
-        "절대로 첫 문장에 결론을 쓰지 말 것. "
-        "'결론:', '답:', '정답:' 같은 레이블을 답변 앞부분에 붙이지 말 것."
+        "당신은 드라마 작가입니다. "
+        "【미괄식 답변 형식 - 반드시 준수】"
+        "답변은 아래 3단계 구조를 엄격히 따를 것: "
+        "1단계(근거 나열): 참고 문서에서 질문과 관련된 구체적 사실·사례·인용을 2가지 이상 먼저 제시하라. "
+        "각 근거는 출처(등장인물, 장면, 사건 등)를 명시하며 서술하라. "
+        "2단계(분석·연결): 나열한 근거들이 서로 어떻게 연결되며 무엇을 시사하는지 논리적으로 설명하라. "
+        "3단계(결론 도출): 마지막 문장에서만 질문에 대한 최종 답변을 단언형으로 제시하라. "
+        "예) '따라서 ○○는 △△이다.', '이를 종합하면, ○○의 이유는 △△이다.' 형태로 마무리하라. "
+        "【금지 사항】"
+        "첫 문장이나 답변 초반부에 결론·핵심 답을 언급하는 것 금지. "
+        "'결론:', '답:', '정답:' 같은 레이블을 첫머리에 붙이는 것 금지. "
+        "근거 없이 결론만 앞세우는 두괄식 구조 금지."
     ),
     "free": "",
 }
@@ -122,25 +152,14 @@ def _extract_question_text(query: str) -> str:
     return query
 
 def retrieve_context(query: str, k: int = TOP_K) -> str:
-    if VECTORSTORE is None:
+    if RETRIEVER is None:
         return ""
 
     clean_query = _extract_question_text(query)
 
-    # 1단계: 유사도 점수와 함께 후보 청크를 넓게 수집
-    scored = VECTORSTORE.similarity_search_with_relevance_scores(clean_query, k=FETCH_K)
-
-    # 2단계: 점수 임계값 이하 청크 제거
-    scored = [(doc, s) for doc, s in scored if s >= SCORE_THRESHOLD]
-
-    if not scored:
-        # 임계값 필터링 결과가 없으면 fallback으로 기본 검색
-        scored = VECTORSTORE.similarity_search_with_relevance_scores(clean_query, k=k)
-
-    # 3단계: MMR로 상위 k개 선택 (관련성 + 다양성 균형)
-    docs = VECTORSTORE.max_marginal_relevance_search(
-        clean_query, k=k, fetch_k=max(len(scored), FETCH_K), lambda_mult=MMR_LAMBDA
-    )
+    # BM25(키워드) + FAISS-MMR(의미) → RRF 융합
+    docs = RETRIEVER.invoke(clean_query)
+    docs = docs[:k]
 
     if not docs:
         return ""
@@ -324,7 +343,7 @@ CHAT_UI_HTML = """<!DOCTYPE html>
   <div class="header-left">
     <div class="logo">&#129504;</div>
     <div class="header-title">RAG Chatbot</div>
-    <div class="badge">Qwen3.5-0.8B</div>
+    <div class="badge">Qwen3.5-27B</div>
     <div class="rag-badge">&#128269; FAISS RAG</div>
   </div>
   <div style="display:flex;align-items:center;gap:8px">
