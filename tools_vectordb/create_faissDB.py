@@ -22,8 +22,8 @@ EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://localhost:30005")
 EMBEDDING_MODEL    = "BAAI/bge-m3"
 INPUT_PATH         = "data"
 VECTOR_STORE_PATH  = "vectorstore"
-CHUNK_SIZE         = 1000
-CHUNK_OVERLAP      = 200
+CHUNK_SIZE         = 500
+CHUNK_OVERLAP      = 150
 
 # 지원 확장자
 SUPPORTED_EXTENSIONS = ("*.txt", "*.md")

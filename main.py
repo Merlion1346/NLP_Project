@@ -15,12 +15,15 @@ from langchain_community.vectorstores import FAISS
 load_dotenv("api_keys.env")
 
 # ─── 설정 ─────────────────────────────────────────────────────────────────────
-LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL", "http://localhost:30004")
-EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://localhost:30005")
+LLAMA_CPP_BASE_URL = os.getenv("LLAMA_CPP_BASE_URL")
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL")
 MODEL_NAME         = "unsloth/Qwen3.6.-35B-A3B"
 EMBEDDING_MODEL    = "BAAI/bge-m3"
 VECTOR_STORE_PATH  = "vectorstore"
-TOP_K              = 3   # 검색할 문서 수
+TOP_K              = 6     # 최종 반환 청크 수
+FETCH_K            = 20    # MMR 후보 청크 수 (TOP_K보다 크게)
+MMR_LAMBDA         = 0.6   # 1.0=순수 유사도, 0.0=순수 다양성
+SCORE_THRESHOLD    = 0.3   # 이 점수 미만 청크 제외 (0~1)
 
 # ─── 임베딩 & 벡터스토어 로드 ─────────────────────────────────────────────────
 print(f"[RAG] 임베딩 모델: {EMBEDDING_MODEL} @ {EMBEDDING_BASE_URL}")
@@ -109,13 +112,39 @@ def build_experiment_system_prompt(domain: str, difficulty: str, layout: str) ->
     return " ".join(parts)
 
 # ─── RAG 헬퍼 ─────────────────────────────────────────────────────────────────
+import re as _re
+
+def _extract_question_text(query: str) -> str:
+    """객관식 포맷에서 문제 본문만 추출해 검색 정확도를 높입니다."""
+    m = _re.search(r'문제:\s*(.+?)(?:\nA\.|\Z)', query, _re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return query
+
 def retrieve_context(query: str, k: int = TOP_K) -> str:
-    """쿼리와 관련된 문서를 벡터 DB에서 검색해 컨텍스트 문자열로 반환합니다."""
     if VECTORSTORE is None:
         return ""
-    docs = VECTORSTORE.similarity_search(query, k=k)
+
+    clean_query = _extract_question_text(query)
+
+    # 1단계: 유사도 점수와 함께 후보 청크를 넓게 수집
+    scored = VECTORSTORE.similarity_search_with_relevance_scores(clean_query, k=FETCH_K)
+
+    # 2단계: 점수 임계값 이하 청크 제거
+    scored = [(doc, s) for doc, s in scored if s >= SCORE_THRESHOLD]
+
+    if not scored:
+        # 임계값 필터링 결과가 없으면 fallback으로 기본 검색
+        scored = VECTORSTORE.similarity_search_with_relevance_scores(clean_query, k=k)
+
+    # 3단계: MMR로 상위 k개 선택 (관련성 + 다양성 균형)
+    docs = VECTORSTORE.max_marginal_relevance_search(
+        clean_query, k=k, fetch_k=max(len(scored), FETCH_K), lambda_mult=MMR_LAMBDA
+    )
+
     if not docs:
         return ""
+
     parts = []
     for i, doc in enumerate(docs, 1):
         source = doc.metadata.get("source", "")
