@@ -26,7 +26,7 @@ import httpx
 import pandas as pd
 
 # ─── 기본 설정 ─────────────────────────────────────────────────────────────────
-CHATBOT_URL = "http://localhost:8000"
+CHATBOT_URL = "http://localhost:8001"
 EVAL_DIR    = "evaluation"
 
 LAYOUTS    = ["deductive", "inductive", "free"]
